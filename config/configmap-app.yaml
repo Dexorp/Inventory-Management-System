@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ims-config
+  namespace: warehouse-tenant-xyz
+data:
+  APP_ENV: "production"
+  DB_HOST: "postgres.tenant-xyz.svc.cluster.local"
+  DB_NAME: "tenant_xyz_db"
+  REDIS_HOST: "redis.tenant-xyz.svc.cluster.local"

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ims-worker
+  namespace: warehouse-tenant-xyz
+  labels:
+    app: ims-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ims-worker
+  template:
+    metadata:
+      labels:
+        app: ims-worker
+        tier: worker
+    spec:
+      serviceAccountName: tenant-xyz-app
+      containers:
+        - name: ims-worker
+          image: your-docker-user/ims-worker:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ims-config
+            - secretRef:
+                name: ims-db-secret
+          env:
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ims-rabbitmq-secret
+                  key: url
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"

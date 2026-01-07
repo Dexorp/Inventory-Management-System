@@ -1,0 +1,18 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: ims-worker-scaledobject
+  namespace: warehouse-tenant-xyz
+spec:
+  scaleTargetRef:
+    name: ims-worker
+  minReplicaCount: 0
+  maxReplicaCount: 50
+  cooldownPeriod: 60
+  pollingInterval: 15
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueName: ims.tasks
+        hostFromEnv: RABBITMQ_URL
+        queueLength: "100"   # one replica per 100 queued messages

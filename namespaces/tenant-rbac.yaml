@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant-xyz-app
+  namespace: warehouse-tenant-xyz
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant-xyz-role
+  namespace: warehouse-tenant-xyz
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "configmaps", "secrets", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-xyz-binding
+  namespace: warehouse-tenant-xyz
+subjects:
+  - kind: ServiceAccount
+    name: tenant-xyz-app
+    namespace: warehouse-tenant-xyz
+roleRef:
+  kind: Role
+  name: tenant-xyz-role
+  apiGroup: rbac.authorization.k8s.io

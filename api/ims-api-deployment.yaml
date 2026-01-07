@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ims-api
+  namespace: warehouse-tenant-xyz
+  labels:
+    app: ims-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ims-api
+  template:
+    metadata:
+      labels:
+        app: ims-api
+        tier: frontend
+    spec:
+      serviceAccountName: tenant-xyz-app
+      containers:
+        - name: ims-api
+          image: your-docker-user/ims-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ims-config
+            - secretRef:
+                name: ims-db-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
