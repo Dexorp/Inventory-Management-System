@@ -19,7 +19,7 @@ spec:
       serviceAccountName: tenant-xyz-app
       containers:
         - name: ims-worker
-          image: your-docker-user/ims-worker:latest
+          image: joforrester/ims-worker:latest
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

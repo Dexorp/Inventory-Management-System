@@ -19,7 +19,7 @@ spec:
       serviceAccountName: tenant-xyz-app
       containers:
         - name: ims-api
-          image: your-docker-user/ims-api:latest
+          image: joforrester/ims-api:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

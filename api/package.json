@@ -1,0 +1,12 @@
+{
+  "name": "user-api",
+  "version": "1.0.0",
+  "description": "for users",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "ims-api.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
