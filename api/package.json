@@ -4,9 +4,11 @@
   "description": "for users",
   "license": "ISC",
   "author": "",
-  "type": "commonjs",
+  "type": "module",
   "main": "ims-api.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   }
+
+
 }
