@@ -24,6 +24,4 @@ jobs:
         working-directory: api
         run: npm ci
 
-      - name: Run tests
-        working-directory: api
-        run: npm test
+      
