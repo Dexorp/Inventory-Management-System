@@ -20,11 +20,11 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        working-directory: services/general-api
+        working-directory: api
         run: npm ci
 
       - name: Run tests
-        working-directory: services/general-api
+        working-directory: api
         run: npm test
         env:
           NODE_ENV: test
