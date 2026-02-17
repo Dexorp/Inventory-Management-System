@@ -1,0 +1,27 @@
+        containers:
+          - name: ims-api
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            ports:
+              - name: http
+                containerPort: 3000
+
+            envFrom:
+              - configMapRef:
+                  name: '{{ include "ims-api.fullname" . }}-config'
+              - secretRef:
+                  name: '{{ include "ims-api.fullname" . }}-secret'
+
+            livenessProbe:
+              httpGet:
+                path: /healthz
+                port: http
+              initialDelaySeconds: 10
+              periodSeconds: 10
+
+            readinessProbe:
+              httpGet:
+                path: /readyz
+                port: http
+              initialDelaySeconds: 10
+              periodSeconds: 5

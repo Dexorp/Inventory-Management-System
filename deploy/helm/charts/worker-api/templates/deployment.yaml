@@ -1,0 +1,27 @@
+        containers:
+          - name: worker-api
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            ports:
+              - name: http
+                containerPort: 3001
+
+            envFrom:
+              - configMapRef:
+                  name: '{{ include "worker-api.fullname" . }} -config'
+              - secretRef:
+                  name: '{{ include "worker-api.fullname" . }}-secret'
+
+            livenessProbe:
+              httpGet:
+                path: /healthz
+                port: http
+              initialDelaySeconds: 10
+              periodSeconds: 10
+
+            readinessProbe:
+              httpGet:
+                path: /readyz
+                port: http
+              initialDelaySeconds: 10
+              periodSeconds: 5

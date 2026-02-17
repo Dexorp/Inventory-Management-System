@@ -1,0 +1,22 @@
+replicaCount: 1
+
+image:
+  repository: joforrester/worker-api
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 3001
+
+env:
+  NODE_ENV: production
+  DB_HOST: "173.249.8.56"
+  DB_PORT: "5432"
+  DB_USER: "ims-user"
+  DB_NAME: "ims-user"
+  REDIS_HOST: "redis-master.ims.svc.cluster.local"
+  REDIS_PORT: "6379"
+  KAFKA_BROKERS: "YOUR_EXTERNAL_KAFKA:9092"
+
+secretEnv:
+  DB_PASSWORD: "29WK3n4fn43!!m3HH3d"
