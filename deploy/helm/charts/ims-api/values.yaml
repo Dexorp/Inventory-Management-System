@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: joforrester/general-api
+  repository: joforrester/ims-api
   tag: "latest"
   pullPolicy: IfNotPresent
 
