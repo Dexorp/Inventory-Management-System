@@ -1,0 +1,133 @@
+---
+# Source: ims-api/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ims-api-ims-api-config
+  labels:
+    app.kubernetes.io/name: ims-api
+    app.kubernetes.io/instance: ims-api
+data:
+  DB_HOST: "173.249.8.56"
+  DB_NAME: "ims-user"
+  DB_PORT: "5432"
+  DB_USER: "ims-user"
+  KAFKA_BROKERS: "YOUR_EXTERNAL_KAFKA:9092"
+  NODE_ENV: "production"
+  REDIS_HOST: "redis-master.ims.svc.cluster.local"
+  REDIS_PORT: "6379"
+---
+# Source: ims-api/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ims-api-ims-api
+  labels:
+    app.kubernetes.io/name: ims-api
+    app.kubernetes.io/instance: ims-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ims-api
+    app.kubernetes.io/instance: ims-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
+---
+# Source: ims-api/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ims-api-ims-api
+  labels:
+    app.kubernetes.io/name: ims-api
+    app.kubernetes.io/instance: ims-api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ims-api
+      app.kubernetes.io/instance: ims-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ims-api
+        app.kubernetes.io/instance: ims-api
+    spec:
+      serviceAccountName: "tenant-xyz-app"
+      containers:
+        - name: ims-api
+          image: "joforrester/general-api:latest"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: ims-api-ims-api-config
+            - secretRef:
+                name: ims-api-ims-api-secret
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: "/readyz"
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: "/healthz"
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+# Source: ims-api/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ims-api-ims-api-hpa
+  labels:
+    app.kubernetes.io/name: ims-api
+    app.kubernetes.io/instance: ims-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ims-api-ims-api
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+# Source: ims-api/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ims-api-ims-api
+  labels:
+    app.kubernetes.io/name: ims-api
+    app.kubernetes.io/instance: ims-api
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ims-api-ims-api
+                port:
+                  number: 3000

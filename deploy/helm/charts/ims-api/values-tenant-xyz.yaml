@@ -1,0 +1,81 @@
+
+
+replicaCount: 2
+
+image:
+  repository: joforrester/ims-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Keep your service account per tenant
+serviceAccountName: tenant-xyz-app
+
+# Service inside cluster (Ingress routes to this port)
+service:
+  port: 3000
+
+# Container port (if your Deployment template uses it; safe to include)
+containerPort: 3000
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+probes:
+  liveness:
+    path: /livez
+    initialDelaySeconds: 10
+    periodSeconds: 20
+  readiness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# HPA (matches your earlier ims-api-hpa.yaml intent)
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 60
+
+# Ingress: tenant path prefix with rewrite
+ingress:
+  enabled: true
+  className: nginx
+
+  # This regex matches /xyz and everything after it, capturing the remainder as group 2
+  path: /xyz(/|$)(.*)
+  pathType: Prefix
+
+  # No domain/host needed (public IP access)
+  host: ""
+
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+
+# Non-secret env vars turned into a ConfigMap by your chart
+env:
+  TENANT_ID: "xyz"
+  NODE_ENV: "production"
+
+  # Postgres outside cluster (example placeholders)
+  DB_HOST: "10.0.0.12"
+  DB_PORT: "5432"
+  DB_USER: "ims"
+  DB_NAME: "ims_xyz"
+
+  # Redis in-cluster (example if you deploy it in a shared namespace)
+  REDIS_HOST: "redis-master.ims.svc.cluster.local"
+  REDIS_PORT: "6379"
+
+  # External Kafka
+  KAFKA_BROKERS: "broker1:9092,broker2:9092"
+
+# Secrets turned into a Secret by your chart
+secretEnv:
+  DB_PASSWORD: "REPLACE_ME"

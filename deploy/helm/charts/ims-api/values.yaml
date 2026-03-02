@@ -13,6 +13,8 @@ ingress:
   className: nginx
   path: /
   pathType: Prefix
+  annotations: {}
+
 
 env:
   NODE_ENV: production
@@ -26,3 +28,32 @@ env:
 
 secretEnv:
   DB_PASSWORD: "29WK3n4fn43!!m3HH3d"
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 60
+
+serviceAccount:
+  name: tenant-xyz-app
+
+containerPort: 3000  # keep aligned with your app; defaulting to service.port also works
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 10
+    periodSeconds: 5
+

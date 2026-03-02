@@ -1,8 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: '{{ include "ims-api.fullname" . }}-config'
+  name: {{ include "ims-api.fullname" . }}-config
+  labels:
+    {{- include "ims-api.labels" . | nindent 4 }}
 data:
-  '{{- range $k, $v := .Values.env }}
-    {{ $k }}: {{ $v | quote }}
-  {{- end }}'
+{{- range $k, $v := .Values.env }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}

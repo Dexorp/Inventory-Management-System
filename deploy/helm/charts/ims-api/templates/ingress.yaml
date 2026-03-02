@@ -1,12 +1,24 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ims-api.fullname" . }}
+  labels:
+    {{- include "ims-api.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{ .Values.ingress.className | default "nginx" }}
   rules:
     - http:
         paths:
-          - path: {{ .Values.ingress.path }}
-            pathType: {{ .Values.ingress.pathType }}
+          - path: {{ .Values.ingress.path | default "/" }}
+            pathType: {{ .Values.ingress.pathType | default "Prefix" }}
             backend:
               service:
                 name: {{ include "ims-api.fullname" . }}
                 port:
-                  number: 3000
+                  number: {{ .Values.service.port }}
+{{- end }}
