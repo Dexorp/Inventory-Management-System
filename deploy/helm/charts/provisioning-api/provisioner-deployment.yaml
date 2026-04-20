@@ -19,7 +19,7 @@ spec:
       containers:
         - name: provisioner
           image: joforrester/provisioner-api:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
@@ -36,6 +36,8 @@ spec:
                 secretKeyRef:
                   name: ims-provisioner-secret
                   key: ADMIN_API_KEY
+            - name: TENANT_NS_PREFIX
+              
           readinessProbe:
             httpGet:
               path: /readyz

@@ -19,7 +19,7 @@ spec:
       containers:
         - name: operator
           image: joforrester/ims-operator:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             # Operator should only watch Tenant CRs in ims-system
             - name: WATCH_NAMESPACE

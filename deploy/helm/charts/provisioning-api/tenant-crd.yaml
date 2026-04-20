@@ -9,145 +9,56 @@ spec:
     plural: tenants
     singular: tenant
     kind: Tenant
-    shortNames: ["tnt"]
+    shortNames:
+      - tenant
   versions:
     - name: v1
       served: true
       storage: true
       subresources:
         status: {}
-      additionalPrinterColumns:
-        - name: TenantNS
-          type: string
-          jsonPath: .spec.namespace
-        - name: Slug
-          type: string
-          jsonPath: .spec.slug
-        - name: Phase
-          type: string
-          jsonPath: .status.phase
       schema:
         openAPIV3Schema:
           type: object
-          required: ["spec"]
           properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
             spec:
               type: object
-              required: ["namespace", "slug", "imsApi", "workerApi", "env", "secretRefs"]
+              required:
+                - namespace
+                - secretRefs
+                - helm
               properties:
                 namespace:
                   type: string
-                  pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
                 slug:
                   type: string
-                  pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-
-                ingress:
-                  type: object
-                  properties:
-                    enabled:
-                      type: boolean
-                      default: true
-                    className:
-                      type: string
-                      default: "nginx"
-                    pathPrefix:
-                      type: string
-                      description: "Path prefix like /acme"
-                    rewrite:
-                      type: object
-                      properties:
-                        enabled:
-                          type: boolean
-                          default: true
-
-                imsApi:
-                  type: object
-                  required: ["image", "replicas", "serviceAccountName", "containerPort"]
-                  properties:
-                    image:
-                      type: string
-                      minLength: 1
-                    replicas:
-                      type: integer
-                      minimum: 1
-                      maximum: 50
-                    serviceAccountName:
-                      type: string
-                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-                    containerPort:
-                      type: integer
-                      minimum: 1
-                      maximum: 65535
-                    resources:
-                      type: object
-                      properties:
-                        requests:
-                          type: object
-                          properties:
-                            cpu: { type: string }
-                            memory: { type: string }
-                        limits:
-                          type: object
-                          properties:
-                            cpu: { type: string }
-                            memory: { type: string }
-
-                workerApi:
-                  type: object
-                  required: ["image", "replicas", "serviceAccountName", "containerPort"]
-                  properties:
-                    image:
-                      type: string
-                      minLength: 1
-                    replicas:
-                      type: integer
-                      minimum: 0
-                      maximum: 50
-                    serviceAccountName:
-                      type: string
-                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-                    containerPort:
-                      type: integer
-                      minimum: 1
-                      maximum: 65535
-                    resources:
-                      type: object
-                      properties:
-                        requests:
-                          type: object
-                          properties:
-                            cpu: { type: string }
-                            memory: { type: string }
-                        limits:
-                          type: object
-                          properties:
-                            cpu: { type: string }
-                            memory: { type: string }
-
-                # env is a true map/dictionary, so additionalProperties belongs here
-                env:
-                  type: object
-                  additionalProperties:
-                    type: string
-
                 secretRefs:
                   type: object
-                  required: ["dbSecretName"]
+                  required:
+                    - dbSecretName
                   properties:
                     dbSecretName:
                       type: string
-                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-                    kafkaSecretName:
+                helm:
+                  type: object
+                  required:
+                    - releaseName
+                    - chartPath
+                    - values
+                  properties:
+                    releaseName:
                       type: string
-                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-
+                    chartPath:
+                      type: string
+                    values:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
-              properties:
-                phase: { type: string }
-                message: { type: string }
-                observedGeneration: { type: integer }
-                lastReconcileTime:
-                  type: string
-                  format: date-time
+              x-kubernetes-preserve-unknown-fields: true

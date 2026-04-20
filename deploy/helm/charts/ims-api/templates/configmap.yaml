@@ -5,6 +5,6 @@ metadata:
   labels:
     {{- include "ims-api.labels" . | nindent 4 }}
 data:
-{{- range $k, $v := .Values.env }}
+{{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
 {{- end }}

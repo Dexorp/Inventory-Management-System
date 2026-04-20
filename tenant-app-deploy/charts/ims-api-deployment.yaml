@@ -1,0 +1,47 @@
+{{- if .Values.imsApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ims.imsApiName" . }}
+  labels:
+    {{- include "ims.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.imsApi.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ims.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ims-api
+  template:
+    metadata:
+      labels:
+        {{- include "ims.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ims-api
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
+      containers:
+        - name: ims-api
+          image: "{{ .Values.imsApi.image.repository }}:{{ .Values.imsApi.image.tag }}"
+          imagePullPolicy: {{ .Values.imsApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.imsApi.containerPort | default .Values.imsApi.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ims.configMapName" . }}
+            - secretRef:
+                name: {{ .Values.secretRefs.existingSecretName }}
+          resources:
+{{ toYaml .Values.imsApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.imsApi.probes.liveness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.imsApi.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.imsApi.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.imsApi.probes.readiness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.imsApi.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.imsApi.probes.readiness.periodSeconds }}
+{{- end }}

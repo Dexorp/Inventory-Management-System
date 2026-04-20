@@ -1,10 +1,16 @@
 /**
- * Minimal IMS Operator
+ * IMS Operator - Helm-driven runtime reconciler
  * - Watches Tenant CRs in ims-system
- * - Reconciles tenant namespace resources: SA, ConfigMap, Deployments, Service, Ingress
- * - Expects provisioning API to create the DB secret in tenant namespace
+ * - Ensures tenant namespace exists
+ * - Verifies provisioning API created the DB secret in tenant namespace
+ * - Installs/upgrades tenant runtime resources via Helm
+ * - Handles finalizers/status updates and namespace deletion
  */
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { spawn } = require("child_process");
 const k8s = require("@kubernetes/client-node");
 
 const WATCH_NAMESPACE = process.env.WATCH_NAMESPACE || "ims-system";
@@ -12,27 +18,8 @@ const CRD_GROUP = "ims.example.com";
 const CRD_VERSION = "v1";
 const CRD_PLURAL = "tenants";
 const FINALIZER = "ims.example.com/finalizer";
+const DEFAULT_HELM_CHART_PATH = process.env.HELM_CHART_PATH || "tenant-app-deploy/charts";
 
-// Resource names inside each tenant namespace
-const CONFIGMAP_NAME = "ims-config";
-const IMS_API_NAME = "ims-api";
-const WORKER_API_NAME = "worker-api";
-const IMS_API_SVC_NAME = "ims-api";
-const INGRESS_NAME = "ims-api-ingress";
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function safeSlug(s) {
-  return String(s || "").toLowerCase();
-}
-
-// K8s client
 const kc = new k8s.KubeConfig();
 try {
   kc.loadFromCluster();
@@ -41,208 +28,131 @@ try {
 }
 
 const coreV1 = kc.makeApiClient(k8s.CoreV1Api);
-const appsV1 = kc.makeApiClient(k8s.AppsV1Api);
-const networkingV1 = kc.makeApiClient(k8s.NetworkingV1Api);
 const customApi = kc.makeApiClient(k8s.CustomObjectsApi);
 
-// ----- Helpers: create-or-patch patterns -----
+const inFlight = new Set();
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function isNotFound(err) {
+  return (
+    err?.response?.statusCode === 404 ||
+    err?.statusCode === 404 ||
+    err?.status === 404 ||
+    err?.code === 404 ||
+    err?.body?.code === 404 ||
+    (err?.body?.status === "Failure" && err?.body?.reason === "NotFound") ||
+    String(err?.message || "").toLowerCase().includes("not found")
+  );
+}
+
+function withResourceVersion(body, existing) {
+  return {
+    ...body,
+    metadata: {
+      ...(body.metadata || {}),
+      resourceVersion: existing?.metadata?.resourceVersion,
+    },
+  };
+}
+
+function sameStatusMeaningfully(currentStatus, nextStatus) {
+  return (
+    currentStatus?.phase === nextStatus?.phase &&
+    currentStatus?.message === nextStatus?.message &&
+    currentStatus?.observedGeneration === nextStatus?.observedGeneration
+  );
+}
+
 async function ensureNamespace(ns, labels) {
-  try {
-    await coreV1.readNamespace(ns);
-    // Patch labels (best-effort)
-    await coreV1.patchNamespace(
-      ns,
-      { metadata: { labels } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/merge-patch+json" } }
-    );
-    return { created: false };
-  } catch (e) {
-    if (e?.response?.statusCode !== 404) throw e;
-  }
-  await coreV1.createNamespace({ metadata: { name: ns, labels } });
-  return { created: true };
-}
-
-async function ensureServiceAccount(ns, name, labels) {
-  try {
-    await coreV1.readNamespacedServiceAccount(name, ns);
-    await coreV1.patchNamespacedServiceAccount(
-      name,
-      ns,
-      { metadata: { labels } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/merge-patch+json" } }
-    );
-    return { created: false };
-  } catch (e) {
-    if (e?.response?.statusCode !== 404) throw e;
-  }
-  await coreV1.createNamespacedServiceAccount(ns, {
+  const desired = {
     apiVersion: "v1",
-    kind: "ServiceAccount",
-    metadata: { name, namespace: ns, labels },
-  });
-  return { created: true };
-}
+    kind: "Namespace",
+    metadata: { name: ns, labels },
+  };
 
-async function ensureConfigMap(ns, name, data, labels) {
   try {
-    await coreV1.readNamespacedConfigMap(name, ns);
-    await coreV1.patchNamespacedConfigMap(
-      name,
-      ns,
-      { data, metadata: { labels } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/merge-patch+json" } }
-    );
+    const existing = await coreV1.readNamespace({ name: ns });
+
+    await coreV1.replaceNamespace({
+      name: ns,
+      body: withResourceVersion(desired, existing),
+    });
+
     return { created: false };
   } catch (e) {
-    if (e?.response?.statusCode !== 404) throw e;
+    if (!isNotFound(e)) throw e;
   }
-  await coreV1.createNamespacedConfigMap(ns, {
-    apiVersion: "v1",
-    kind: "ConfigMap",
-    metadata: { name, namespace: ns, labels },
-    data,
-  });
+
+  await coreV1.createNamespace({ body: desired });
   return { created: true };
 }
 
 async function secretExists(ns, name) {
   try {
-    await coreV1.readNamespacedSecret(name, ns);
+    await coreV1.readNamespacedSecret({
+      name,
+      namespace: ns,
+    });
     return true;
   } catch (e) {
-    if (e?.response?.statusCode === 404) return false;
+    if (isNotFound(e)) return false;
     throw e;
   }
 }
 
-async function ensureDeployment(ns, name, spec, labels) {
-  try {
-    await appsV1.readNamespacedDeployment(name, ns);
-    await appsV1.patchNamespacedDeployment(
-      name,
-      ns,
-      { spec, metadata: { labels } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/merge-patch+json" } }
-    );
-    return { created: false };
-  } catch (e) {
-    if (e?.response?.statusCode !== 404) throw e;
-  }
-
-  await appsV1.createNamespacedDeployment(ns, {
-    apiVersion: "apps/v1",
-    kind: "Deployment",
-    metadata: { name, namespace: ns, labels },
-    spec,
-  });
-  return { created: true };
-}
-
-async function ensureService(ns, name, spec, labels) {
-  try {
-    await coreV1.readNamespacedService(name, ns);
-    await coreV1.patchNamespacedService(
-      name,
-      ns,
-      { spec, metadata: { labels } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/merge-patch+json" } }
-    );
-    return { created: false };
-  } catch (e) {
-    if (e?.response?.statusCode !== 404) throw e;
-  }
-
-  await coreV1.createNamespacedService(ns, {
-    apiVersion: "v1",
-    kind: "Service",
-    metadata: { name, namespace: ns, labels },
-    spec,
-  });
-  return { created: true };
-}
-
-async function ensureIngress(ns, name, spec, annotations, labels) {
-  try {
-    await networkingV1.readNamespacedIngress(name, ns);
-    await networkingV1.patchNamespacedIngress(
-      name,
-      ns,
-      { spec, metadata: { annotations, labels } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/merge-patch+json" } }
-    );
-    return { created: false };
-  } catch (e) {
-    if (e?.response?.statusCode !== 404) throw e;
-  }
-
-  await networkingV1.createNamespacedIngress(ns, {
-    apiVersion: "networking.k8s.io/v1",
-    kind: "Ingress",
-    metadata: { name, namespace: ns, annotations, labels },
-    spec,
-  });
-  return { created: true };
-}
-
-// ----- Tenant Status helpers -----
+// JSON Patch is used because your cluster/client combination was parsing patch calls as jsonPatchOp arrays.
 async function patchTenantStatus(name, statusPatch) {
-  // Namespaced CR in ims-system
-  // PATCH /status subresource
-  return customApi.patchNamespacedCustomObjectStatus(
-    CRD_GROUP,
-    CRD_VERSION,
-    WATCH_NAMESPACE,
-    CRD_PLURAL,
+  return await customApi.patchNamespacedCustomObjectStatus({
+    group: CRD_GROUP,
+    version: CRD_VERSION,
+    namespace: WATCH_NAMESPACE,
+    plural: CRD_PLURAL,
     name,
-    { status: statusPatch },
-    undefined,
-    undefined,
-    undefined,
-    { headers: { "Content-Type": "application/merge-patch+json" } }
-  );
+    body: [
+      {
+        op: "add",
+        path: "/status",
+        value: statusPatch,
+      },
+    ],
+  });
 }
 
-async function patchTenantMetadata(name, metadataPatch) {
-  return customApi.patchNamespacedCustomObject(
-    CRD_GROUP,
-    CRD_VERSION,
-    WATCH_NAMESPACE,
-    CRD_PLURAL,
-    name,
-    { metadata: metadataPatch },
-    undefined,
-    undefined,
-    undefined,
-    { headers: { "Content-Type": "application/merge-patch+json" } }
-  );
+async function patchTenantStatusIfChanged(tenant, statusPatch) {
+  if (sameStatusMeaningfully(tenant.status, statusPatch)) {
+    return false;
+  }
+
+  await patchTenantStatus(tenant.metadata.name, statusPatch);
+
+  tenant.status = {
+    ...(tenant.status || {}),
+    ...statusPatch,
+  };
+
+  return true;
 }
 
-// ----- Reconcile logic -----
+async function patchTenantMetadata(name, finalizers) {
+  return await customApi.patchNamespacedCustomObject({
+    group: CRD_GROUP,
+    version: CRD_VERSION,
+    namespace: WATCH_NAMESPACE,
+    plural: CRD_PLURAL,
+    name,
+    body: [
+      {
+        op: "add",
+        path: "/metadata/finalizers",
+        value: finalizers,
+      },
+    ],
+  });
+}
+
 function labelsForTenant(tenantName) {
   return {
     "ims.example.com/managed": "true",
@@ -251,236 +161,240 @@ function labelsForTenant(tenantName) {
   };
 }
 
-function makeDeploymentSpec({
-  appName,
-  tenantName,
-  replicas,
-  image,
-  containerPort,
-  serviceAccountName,
-  configMapName,
-  secretName,
-  resources,
-  readinessPath = "/readyz",
-  livenessPath = "/healthz",
-}) {
-  const selector = { app: appName, "ims.example.com/tenant": tenantName };
+function buildHelmValues(tenant) {
+  const name = tenant.metadata.name;
+  const spec = tenant.spec || {};
+  const slug = spec.slug || name;
+
+  const helmValues = { ...(spec.helm?.values || {}) };
+
+  helmValues.tenant = {
+    ...(helmValues.tenant || {}),
+    name,
+    slug,
+  };
+
+  helmValues.secretRefs = {
+    ...(helmValues.secretRefs || {}),
+    existingSecretName:
+      helmValues.secretRefs?.existingSecretName || spec.secretRefs?.dbSecretName,
+  };
+
+  return helmValues;
+}
+
+function getHelmConfig(tenant) {
+  const name = tenant.metadata.name;
+  const spec = tenant.spec || {};
+
   return {
-    replicas,
-    selector: { matchLabels: selector },
-    template: {
-      metadata: { labels: selector },
-      spec: {
-        serviceAccountName,
-        containers: [
-          {
-            name: appName,
-            image,
-            imagePullPolicy: "IfNotPresent",
-            ports: [{ name: "http", containerPort }],
-            envFrom: [
-              { configMapRef: { name: configMapName } },
-              { secretRef: { name: secretName } },
-            ],
-            resources: resources || undefined,
-            readinessProbe: {
-              httpGet: { path: readinessPath, port: "http" },
-              initialDelaySeconds: 10,
-              periodSeconds: 5,
-            },
-            livenessProbe: {
-              httpGet: { path: livenessPath, port: "http" },
-              initialDelaySeconds: 20,
-              periodSeconds: 10,
-            },
-          },
-        ],
-      },
-    },
+    releaseName: spec.helm?.releaseName || `tenant-${name}`,
+    chartPath: spec.helm?.chartPath || DEFAULT_HELM_CHART_PATH,
+    values: buildHelmValues(tenant),
   };
 }
 
-function makeServiceSpec({ tenantName, appName, port }) {
-  return {
-    type: "ClusterIP",
-    selector: { app: appName, "ims.example.com/tenant": tenantName },
-    ports: [{ name: "http", port, targetPort: "http", protocol: "TCP" }],
-  };
+function runCommand(cmd, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...options,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (d) => {
+      stdout += d.toString();
+    });
+
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+    });
+
+    child.on("error", reject);
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr, code });
+      } else {
+        const err = new Error(
+          `${cmd} exited with code ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+        err.code = code;
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      }
+    });
+  });
 }
 
-function makeIngressSpec({ className, slug, serviceName, servicePort }) {
-  const pathPrefix = `/${slug}`;
-  // regex path: /acme(/|$)(.*)  rewrite: /$2
-  return {
-    ingressClassName: className || "nginx",
-    rules: [
-      {
-        http: {
-          paths: [
-            {
-              path: `${pathPrefix}(/|$)(.*)`,
-              pathType: "ImplementationSpecific",
-              backend: {
-                service: {
-                  name: serviceName,
-                  port: { number: servicePort },
-                },
-              },
-            },
-          ],
-        },
-      },
-    ],
-  };
+function yamlString(value, indent = 0) {
+  const sp = " ".repeat(indent);
+
+  if (value === null) return "null\n";
+  if (typeof value === "string") return `${JSON.stringify(value)}\n`;
+  if (typeof value === "number" || typeof value === "boolean") return `${String(value)}\n`;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]\n";
+    return value
+      .map((item) => {
+        if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+          const inner = yamlString(item, indent + 2);
+          return `${sp}- ${inner.replace(/^/gm, "  ").trimStart()}\n`;
+        }
+        return `${sp}- ${yamlString(item, 0).trimEnd()}\n`;
+      })
+      .join("");
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length === 0) return "{}\n";
+
+  return entries
+    .map(([k, v]) => {
+      if (v !== null && typeof v === "object") {
+        const inner = yamlString(v, indent + 2);
+        return `${sp}${k}:\n${inner}`;
+      }
+      return `${sp}${k}: ${yamlString(v, 0)}`;
+    })
+    .join("");
+}
+
+async function helmUpgradeInstall({ releaseName, namespace, chartPath, values }) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenant-values-"));
+  const valuesPath = path.join(tmpDir, `${releaseName}.values.yaml`);
+
+  try {
+    fs.writeFileSync(valuesPath, yamlString(values), "utf8");
+
+    return await runCommand("helm", [
+      "upgrade",
+      "--install",
+      releaseName,
+      chartPath,
+      "--namespace",
+      namespace,
+      "--create-namespace",
+      "-f",
+      valuesPath,
+    ]);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+async function helmUninstall(releaseName, namespace) {
+  try {
+    return await runCommand("helm", [
+      "uninstall",
+      releaseName,
+      "--namespace",
+      namespace,
+    ]);
+  } catch (e) {
+    const combined = `${e?.stdout || ""}\n${e?.stderr || ""}\n${e?.message || ""}`;
+    if (combined.toLowerCase().includes("release: not found")) return;
+    throw e;
+  }
 }
 
 async function reconcileTenant(tenant) {
   const name = tenant.metadata.name;
-  const spec = tenant.spec;
+  const spec = tenant.spec || {};
   const deletionTimestamp = tenant.metadata.deletionTimestamp;
-
   const tenantNs = spec.namespace;
-  const slug = safeSlug(spec.slug);
   const labels = labelsForTenant(name);
-
-  // Ensure finalizer
   const finalizers = tenant.metadata.finalizers || [];
-  if (!finalizers.includes(FINALIZER) && !deletionTimestamp) {
-    await patchTenantMetadata(name, { finalizers: [...finalizers, FINALIZER] });
+  const observedGeneration = tenant.status?.observedGeneration;
+  const currentGeneration = tenant.metadata.generation;
+
+  if (!tenantNs) {
+    throw new Error(`Tenant "${name}" is missing spec.namespace`);
   }
 
-  // Handle deletion
-  if (deletionTimestamp) {
-    await patchTenantStatus(name, {
-      phase: "Deleting",
-      message: "Deleting tenant namespace",
-      observedGeneration: tenant.metadata.generation,
-      lastReconcileTime: nowIso(),
-    });
+  const dbSecretName = spec.secretRefs?.dbSecretName;
+  if (!dbSecretName) {
+    throw new Error(`Tenant "${name}" is missing spec.secretRefs.dbSecretName`);
+  }
 
-    // Simplest: delete tenant namespace (garbage collects everything inside)
-    try {
-      await coreV1.deleteNamespace(tenantNs);
-    } catch (e) {
-      // ignore 404
-      if (e?.response?.statusCode !== 404) throw e;
-    }
+  const { releaseName, chartPath, values } = getHelmConfig(tenant);
 
-    // Remove finalizer so Tenant CR can be deleted
-    const newFinalizers = (tenant.metadata.finalizers || []).filter((f) => f !== FINALIZER);
-    await patchTenantMetadata(name, { finalizers: newFinalizers });
+  if (
+    !deletionTimestamp &&
+    finalizers.includes(FINALIZER) &&
+    observedGeneration === currentGeneration
+  ) {
     return;
   }
 
-  await patchTenantStatus(name, {
+  if (!finalizers.includes(FINALIZER) && !deletionTimestamp) {
+    await patchTenantMetadata(name, [...finalizers, FINALIZER]);
+    tenant.metadata.finalizers = [...finalizers, FINALIZER];
+  }
+
+  if (deletionTimestamp) {
+    await patchTenantStatusIfChanged(tenant, {
+      phase: "Deleting",
+      message: "Uninstalling Helm release and deleting tenant namespace",
+      observedGeneration: currentGeneration,
+      lastReconcileTime: nowIso(),
+    });
+
+    await helmUninstall(releaseName, tenantNs);
+
+    try {
+      await coreV1.deleteNamespace({ name: tenantNs });
+    } catch (e) {
+      if (!isNotFound(e)) throw e;
+    }
+
+    const newFinalizers = (tenant.metadata.finalizers || []).filter((f) => f !== FINALIZER);
+    await patchTenantMetadata(name, newFinalizers);
+    tenant.metadata.finalizers = newFinalizers;
+    return;
+  }
+
+  await patchTenantStatusIfChanged(tenant, {
     phase: "Reconciling",
-    message: "Reconciling tenant resources",
-    observedGeneration: tenant.metadata.generation,
+    message: "Ensuring namespace, secret, and Helm release",
+    observedGeneration: currentGeneration,
     lastReconcileTime: nowIso(),
   });
 
-  // 1) Namespace
   await ensureNamespace(tenantNs, labels);
 
-  // 2) ServiceAccount
-  const saName = spec.imsApi.serviceAccountName;
-  await ensureServiceAccount(tenantNs, saName, labels);
-
-  // 3) ConfigMap
-  await ensureConfigMap(tenantNs, CONFIGMAP_NAME, spec.env || {}, labels);
-
-  // 4) Secret must exist (created by provisioning API)
-  const dbSecretName = spec.secretRefs.dbSecretName;
   const hasSecret = await secretExists(tenantNs, dbSecretName);
   if (!hasSecret) {
-    await patchTenantStatus(name, {
+    await patchTenantStatusIfChanged(tenant, {
       phase: "Error",
       message: `Missing secret "${dbSecretName}" in namespace "${tenantNs}"`,
-      observedGeneration: tenant.metadata.generation,
+      observedGeneration: currentGeneration,
       lastReconcileTime: nowIso(),
     });
     return;
   }
 
-  // 5) ims-api Deployment + Service
-  await ensureDeployment(
-    tenantNs,
-    IMS_API_NAME,
-    makeDeploymentSpec({
-      appName: IMS_API_NAME,
-      tenantName: name,
-      replicas: spec.imsApi.replicas,
-      image: spec.imsApi.image,
-      containerPort: spec.imsApi.containerPort,
-      serviceAccountName: saName,
-      configMapName: CONFIGMAP_NAME,
-      secretName: dbSecretName,
-      resources: spec.imsApi.resources,
-    }),
-    labels
-  );
+  await helmUpgradeInstall({
+    releaseName,
+    namespace: tenantNs,
+    chartPath,
+    values,
+  });
 
-  await ensureService(
-    tenantNs,
-    IMS_API_SVC_NAME,
-    makeServiceSpec({
-      tenantName: name,
-      appName: IMS_API_NAME,
-      port: spec.imsApi.containerPort, // service port same as container for simplicity
-    }),
-    labels
-  );
-
-  // 6) Ingress (optional)
-  if (spec.ingress?.enabled) {
-    const className = spec.ingress.className || "nginx";
-    const annotations = {
-      "nginx.ingress.kubernetes.io/use-regex": "true",
-      "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-    };
-
-    await ensureIngress(
-      tenantNs,
-      INGRESS_NAME,
-      makeIngressSpec({
-        className,
-        slug,
-        serviceName: IMS_API_SVC_NAME,
-        servicePort: spec.imsApi.containerPort,
-      }),
-      annotations,
-      labels
-    );
-  }
-
-  // 7) worker-api Deployment (Service optional)
-  await ensureDeployment(
-    tenantNs,
-    WORKER_API_NAME,
-    makeDeploymentSpec({
-      appName: WORKER_API_NAME,
-      tenantName: name,
-      replicas: spec.workerApi.replicas,
-      image: spec.workerApi.image,
-      containerPort: spec.workerApi.containerPort,
-      serviceAccountName: saName,
-      configMapName: CONFIGMAP_NAME,
-      secretName: dbSecretName,
-      resources: spec.workerApi.resources,
-    }),
-    labels
-  );
-
-  // Mark Ready (simple heuristic: resources exist)
-  await patchTenantStatus(name, {
+  await patchTenantStatusIfChanged(tenant, {
     phase: "Ready",
-    message: "Tenant reconciled",
-    observedGeneration: tenant.metadata.generation,
+    message: "Tenant reconciled via Helm",
+    observedGeneration: currentGeneration,
     lastReconcileTime: nowIso(),
   });
 }
 
-// ----- Watch loop -----
 async function startWatch() {
   const watch = new k8s.Watch(kc);
 
@@ -494,27 +408,34 @@ async function startWatch() {
       const name = tenant?.metadata?.name;
       if (!name) return;
 
+      if (!["ADDED", "MODIFIED", "DELETED"].includes(type)) {
+        return;
+      }
+
+      if (inFlight.has(name)) {
+        return;
+      }
+
+      inFlight.add(name);
       try {
-        // Reconcile on ADDED/MODIFIED/DELETED
-        if (["ADDED", "MODIFIED", "DELETED"].includes(type)) {
-          await reconcileTenant(tenant);
-        }
+        await reconcileTenant(tenant);
       } catch (err) {
         console.error(`Reconcile error for tenant "${name}":`, err?.body || err);
-        // best-effort status update
+
         try {
-          await patchTenantStatus(name, {
+          await patchTenantStatusIfChanged(tenant, {
             phase: "Error",
             message: String(err?.message || err),
             observedGeneration: tenant.metadata.generation,
             lastReconcileTime: nowIso(),
           });
         } catch {}
+      } finally {
+        inFlight.delete(name);
       }
     },
     (err) => {
       console.error("Watch ended:", err);
-      // restart watch on failure
       setTimeout(() => startWatch().catch(console.error), 2000);
     }
   );

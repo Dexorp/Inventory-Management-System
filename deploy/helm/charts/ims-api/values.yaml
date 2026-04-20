@@ -1,12 +1,10 @@
-replicaCount: 2
+tenant:
+  name: tenant-xyz
+  slug: tenant-xyz
 
-image:
-  repository: joforrester/ims-api
-  tag: "latest"
-  pullPolicy: Always
-
-service:
-  port: 3000
+serviceAccount:
+  create: true
+  name: tenant-xyz-app
 
 ingress:
   enabled: true
@@ -15,8 +13,7 @@ ingress:
   pathType: Prefix
   annotations: {}
 
-
-env:
+config:
   NODE_ENV: dev
   DB_HOST: "173.249.8.56"
   DB_PORT: "5432"
@@ -26,33 +23,62 @@ env:
   REDIS_PORT: "6379"
   KAFKA_BROKERS: "YOUR_EXTERNAL_KAFKA:9092"
 
-secretEnv:
-  DB_PASSWORD: "29WK3n4fn43!!m3HH3d"
-autoscaling:
+secretRefs:
+  existingSecretName: ims-db-secret
+
+imsApi:
   enabled: true
-  minReplicas: 2
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 60
+  replicaCount: 2
+  image:
+    repository: joforrester/ims-api
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    port: 3000
+  containerPort: 3000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+  probes:
+    liveness:
+      path: /getHealth
+      initialDelaySeconds: 120
+      periodSeconds: 10
+    readiness:
+      path: /getStatus
+      initialDelaySeconds: 10
+      periodSeconds: 5
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
 
-serviceAccount:
-  name: tenant-xyz-app
-
-containerPort: 3000  # keep aligned with your app; defaulting to service.port also works
-
-resources:
-  requests:
-    cpu: "250m"
-    memory: "512Mi"
-  limits:
-    cpu: "1"
-    memory: "1Gi"
-
-probes:
-  liveness:
-    path: /getHealth
-    initialDelaySeconds: 120
-    periodSeconds: 10
-  readiness:
-    path: /getStatus
-    initialDelaySeconds: 10
-    periodSeconds: 5
+workerApi:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: joforrester/worker-api
+    tag: "latest"
+    pullPolicy: Always
+  containerPort: 3001
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+  probes:
+    liveness:
+      path: /getHealth
+      initialDelaySeconds: 120
+      periodSeconds: 10
+    readiness:
+      path: /getStatus
+      initialDelaySeconds: 10
+      periodSeconds: 5

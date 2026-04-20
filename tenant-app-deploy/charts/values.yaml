@@ -1,0 +1,84 @@
+tenant:
+  name: ""
+  slug: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  path: /
+  pathType: Prefix
+  annotations: {}
+
+config:
+  NODE_ENV: dev
+  DB_HOST: ""
+  DB_PORT: "5432"
+  DB_USER: ""
+  DB_NAME: ""
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  KAFKA_BROKERS: ""
+
+secretRefs:
+  existingSecretName: ""
+
+imsApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: joforrester/ims-api
+    tag: latest
+    pullPolicy: Always
+  service:
+    port: 3000
+  containerPort: 3000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+  probes:
+    liveness:
+      path: /getHealth
+      initialDelaySeconds: 120
+      periodSeconds: 10
+    readiness:
+      path: /getStatus
+      initialDelaySeconds: 10
+      periodSeconds: 5
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+
+workerApi:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: joforrester/worker-api
+    tag: latest
+    pullPolicy: Always
+  containerPort: 3001
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+  probes:
+    liveness:
+      path: /getHealth
+      initialDelaySeconds: 120
+      periodSeconds: 10
+    readiness:
+      path: /getStatus
+      initialDelaySeconds: 10
+      periodSeconds: 5
