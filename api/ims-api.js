@@ -24,7 +24,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-	console.log(`Server listening on port ${PORT}`);
+	console.log(`This is the most up to date API.Server listening on port ${PORT}`);
 });
 
 export default server;

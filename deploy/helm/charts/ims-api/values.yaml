@@ -3,7 +3,7 @@ replicaCount: 2
 image:
   repository: joforrester/ims-api
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 service:
   port: 3000
@@ -17,10 +17,10 @@ ingress:
 
 
 env:
-  NODE_ENV: production
+  NODE_ENV: dev
   DB_HOST: "173.249.8.56"
   DB_PORT: "5432"
-  DB_USER: "ims-user"
+  DB_USER: "root"
   DB_NAME: "ims-user"
   REDIS_HOST: "redis-master.ims.svc.cluster.local"
   REDIS_PORT: "6379"
@@ -49,11 +49,10 @@ resources:
 
 probes:
   liveness:
-    path: /healthz
-    initialDelaySeconds: 10
+    path: /getHealth
+    initialDelaySeconds: 120
     periodSeconds: 10
   readiness:
-    path: /readyz
+    path: /getStatus
     initialDelaySeconds: 10
     periodSeconds: 5
-

@@ -1,0 +1,9 @@
+{
+  "name": "ims-provisioner",
+  "version": "0.1.0",
+  "main": "server.js",
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "express": "^4.19.2"
+  }
+}

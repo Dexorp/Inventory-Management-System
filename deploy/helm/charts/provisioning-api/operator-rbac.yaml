@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ims-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ims-operator
+  namespace: ims-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ims-operator
+rules:
+  # Tenant CRD access (namespaced CRs)
+  - apiGroups: ["ims.example.com"]
+    resources: ["tenants", "tenants/status", "tenants/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Namespaces (optional but common if operator owns namespace lifecycle)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Core tenant namespace resources
+  - apiGroups: [""]
+    resources: ["serviceaccounts", "configmaps", "secrets", "services", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Deployments + ReplicaSets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Ingress
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Optional safety controls per namespace
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # If you later add HPA per tenant
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ims-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ims-operator
+subjects:
+  - kind: ServiceAccount
+    name: ims-operator
+    namespace: ims-system

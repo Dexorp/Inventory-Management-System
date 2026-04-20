@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ims-provisioner
+  namespace: ims-system
+  labels:
+    app: ims-provisioner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ims-provisioner
+  template:
+    metadata:
+      labels:
+        app: ims-provisioner
+    spec:
+      serviceAccountName: ims-provisioner
+      containers:
+        - name: provisioner
+          image: joforrester/provisioner-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # The namespace where Tenant CRs live
+            - name: TENANT_SYSTEM_NAMESPACE
+              value: ims-system
+            # Name of the db secret to create in each tenant namespace
+            - name: TENANT_DB_SECRET_NAME
+              value: ims-db-secret
+            # Admin auth (use something better later; fine for now)
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ims-provisioner-secret
+                  key: ADMIN_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10

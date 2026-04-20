@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ims-operator
+  namespace: ims-system
+  labels:
+    app: ims-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ims-operator
+  template:
+    metadata:
+      labels:
+        app: ims-operator
+    spec:
+      serviceAccountName: ims-operator
+      containers:
+        - name: operator
+          image: joforrester/ims-operator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Operator should only watch Tenant CRs in ims-system
+            - name: WATCH_NAMESPACE
+              value: ims-system
+            # (Optional) if your operator supports it:
+            - name: TENANT_CRD_GROUP
+              value: ims.example.com
+            - name: TENANT_CRD_VERSION
+              value: v1
+            - name: TENANT_CRD_KIND
+              value: Tenant
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"

@@ -1,5 +1,5 @@
 {{- define "ims-api.name" -}}
-ims-api
+core-api
 {{- end -}}
 
 {{- define "ims-api.fullname" -}}

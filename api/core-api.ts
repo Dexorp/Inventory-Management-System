@@ -5,6 +5,8 @@ Create the code for this file. Set up a nodejs server with the following routes
 - POST /createWorkorder -creates a new workorder in the database
 - PUT /addworker -adds a worker to company
 - PUT /updateData - updates data in the database
+- GET /getHealth - returns the health of the server
+- Get /getStatus - returns the status of the server
 
 Add a function that runs with every request to log the request method and URL and
 check the permission level of the user making the request. If the request does not have
@@ -13,4 +15,6 @@ each route will call a function from an imported module with the same name as th
 
 Before anything else runs, call a imported function 'apiPrestart' from module 'api-prestart.ts'.
 wrap the call to 'apiPrestart' in a try catch block and log any errors that occur.
+If no errors occur apiPrestart should return the value true. If false is returned, log the error.
+
  */ 

@@ -5,9 +5,7 @@ metadata:
   labels:
     {{- include "ims-api.labels" . | nindent 4 }}
 spec:
-  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
-  {{- end }}
   selector:
     matchLabels:
       {{- include "ims-api.selectorLabels" . | nindent 6 }}
@@ -15,31 +13,26 @@ spec:
     metadata:
       labels:
         {{- include "ims-api.selectorLabels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       containers:
         - name: ims-api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+
           ports:
             - name: http
-              containerPort: {{ .Values.containerPort }}
+              containerPort: {{ .Values.containerPort | default .Values.service.port }}
+
           envFrom:
             - configMapRef:
                 name: {{ include "ims-api.fullname" . }}-config
             - secretRef:
                 name: {{ include "ims-api.fullname" . }}-secret
+
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          readinessProbe:
-            httpGet:
-              path: {{ .Values.probes.readiness.path | quote }}
-              port: http
-            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+{{ toYaml .Values.resources | nindent 12 }}
+
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path | quote }}
@@ -47,4 +40,9 @@ spec:
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
 
-            
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}

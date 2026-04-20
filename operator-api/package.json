@@ -1,0 +1,8 @@
+{
+  "name": "ims-operator",
+  "version": "0.1.0",
+  "main": "operator.js",
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0"
+  }
+}

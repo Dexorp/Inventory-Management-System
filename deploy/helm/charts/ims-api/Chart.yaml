@@ -1,5 +1,5 @@
 apiVersion: v2
-name: ims-api
+name: ims
 description: IMS API service
 type: application
 version: 0.1.0

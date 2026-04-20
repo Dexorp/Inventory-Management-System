@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ims-provisioner
+  namespace: ims-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ims-provisioner
+rules:
+  # Create/update/delete Tenant CRs (in ims-system namespace)
+  - apiGroups: ["ims.example.com"]
+    resources: ["tenants"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Namespaces: create tenant namespaces
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+  # Secrets: create DB secret in the tenant namespace
+  # (ClusterRole because secrets are namespaced and you’ll create them in many namespaces)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ims-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ims-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: ims-provisioner
+    namespace: ims-system
