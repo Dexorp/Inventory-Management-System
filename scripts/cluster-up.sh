@@ -64,3 +64,4 @@ echo "Cluster is up."
 echo "KUBECONFIG=$KUBECONFIG_PATH"
 kind export kubeconfig --name ims-dev # Run this command if network error persists(kubectl)
 kubectl get nodes
+kubectl get pods -n ims-system

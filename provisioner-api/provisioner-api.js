@@ -200,7 +200,7 @@ app.post("/provision-tenant", async (req, res) => {
       },
       helm: {
         releaseName: `tenant-${name}`,
-        chartPath: process.env.HELM_CHART_PATH || "/tenant-app-deploy/charts/Chart.yaml",
+        chartPath: "/app/tenant-app-deploy",
         values: {
           tenant: {
             name,

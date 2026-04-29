@@ -18,7 +18,8 @@ const CRD_GROUP = "ims.example.com";
 const CRD_VERSION = "v1";
 const CRD_PLURAL = "tenants";
 const FINALIZER = "ims.example.com/finalizer";
-const DEFAULT_HELM_CHART_PATH = process.env.HELM_CHART_PATH || "tenant-app-deploy/charts";
+const DEFAULT_HELM_CHART_PATH =  "/app/tenant-app-deploy"; //process.env.HELM_CHART_PATH ||
+const HELM_BIN = process.env.HELM_BIN || "/usr/local/bin/helm";
 
 const kc = new k8s.KubeConfig();
 try {
@@ -195,11 +196,19 @@ function getHelmConfig(tenant) {
 }
 
 function runCommand(cmd, args, options = {}) {
+  console.log("runCommand debug", {
+    cmd,
+    args,
+    cwd: options.cwd || process.cwd(),
+    pathEnv: (options.env || process.env).PATH,
+  });
+
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      ...options,
-    });
+   const child = spawn(cmd, args, {
+  stdio: ["ignore", "pipe", "pipe"],
+  env: { ...process.env, ...(options.env || {}) },
+  ...options,
+});
 
     let stdout = "";
     let stderr = "";
@@ -267,21 +276,27 @@ function yamlString(value, indent = 0) {
 async function helmUpgradeInstall({ releaseName, namespace, chartPath, values }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenant-values-"));
   const valuesPath = path.join(tmpDir, `${releaseName}.values.yaml`);
-
+  
   try {
+    console.log(await runCommand("ls"));
     fs.writeFileSync(valuesPath, yamlString(values), "utf8");
+  
+    await runCommand(HELM_BIN, [
+  "upgrade",
+  "--install",
+  releaseName,
+  "/app/tenant-app-deploy",
+  "--namespace",
+  namespace,
+  "--create-namespace",
+  "-f",
+  valuesPath,
+], {
+  env: { ...process.env },
+});
+    
+    return await installPods(namespace);
 
-    return await runCommand("helm", [
-      "upgrade",
-      "--install",
-      releaseName,
-      chartPath,
-      "--namespace",
-      namespace,
-      "--create-namespace",
-      "-f",
-      valuesPath,
-    ]);
   } finally {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -289,8 +304,40 @@ async function helmUpgradeInstall({ releaseName, namespace, chartPath, values })
   }
 }
 
+async function installPods(namespace) {
+  try {
+    if (!namespace) {
+      throw new Error("installPods requires a namespace");
+    }
+
+    const manifestsPath = "/app/tenant-app-deploy";
+
+    // Optional visibility while debugging
+    console.log(`Applying manifests from ${manifestsPath} into namespace ${namespace}`);
+
+    // Apply all YAML manifests in the directory to the tenant namespace.
+    // --namespace sets the target namespace for namespaced resources.
+    // -f <dir> applies all supported manifest files in that directory.
+    return await runCommand("kubectl", [
+      "apply",
+      "-f",
+      manifestsPath,
+      "--namespace",
+      namespace,
+    ], {
+      env: { ...process.env },
+    });
+  } catch (err) {
+    throw new Error(
+      `installPods failed for namespace "${namespace}": ${err?.message || err}`
+    );
+  }
+}
+
+
 async function helmUninstall(releaseName, namespace) {
   try {
+    
     return await runCommand("helm", [
       "uninstall",
       releaseName,
@@ -386,6 +433,7 @@ async function reconcileTenant(tenant) {
     chartPath,
     values,
   });
+  console.log("Helm Upgrade successful");
 
   await patchTenantStatusIfChanged(tenant, {
     phase: "Ready",

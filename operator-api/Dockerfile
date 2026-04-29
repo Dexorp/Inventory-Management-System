@@ -2,6 +2,8 @@ FROM node:20-bookworm
 
 WORKDIR /app
 
+RUN mkdir -p src /app/tenant-app-deploy
+
 RUN apt-get update && apt-get install -y curl tar gzip && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://get.helm.sh/helm-v3.15.4-linux-amd64.tar.gz -o /tmp/helm.tar.gz \
@@ -12,6 +14,7 @@ RUN curl -fsSL https://get.helm.sh/helm-v3.15.4-linux-amd64.tar.gz -o /tmp/helm.
 
 COPY package*.json ./
 RUN npm ci
+
 
 COPY . .
 
