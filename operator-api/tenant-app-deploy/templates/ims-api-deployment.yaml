@@ -32,6 +32,36 @@ spec:
                 name: {{ .Values.secretRefs.existingSecretName }}
           resources:
 {{ toYaml .Values.imsApi.resources | nindent 12 }}
+          env:
+            - name: PORT
+              value: {{ .Values.imsApi.env.PORT | quote }}
+
+            - name: AUTH_DISABLED
+              value: {{ .Values.imsApi.env.AUTH_DISABLED | quote }}
+
+            - name: PGBOUNCER_HOST
+              value: {{ .Values.imsApi.env.PGBOUNCER_HOST | quote }}
+
+            - name: PGBOUNCER_PORT
+              value: {{ .Values.imsApi.env.PGBOUNCER_PORT | quote }}
+
+            - name: POSTGRES_DB
+              value: {{ .Values.imsApi.env.POSTGRES_DB | quote }}
+
+            - name: POSTGRES_USER
+              value: {{ .Values.imsApi.env.POSTGRES_USER | quote }}
+
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.imsApi.env.POSTGRES_PASSWORD | quote }}
+
+            - name: REDIS_HOST
+              value: {{ printf "%s-redis" .Release.Name | quote }}
+
+            - name: REDIS_PORT
+              value: {{ .Values.imsApi.env.REDIS_PORT | quote }}
+
+            - name: SESSION_KEY_PREFIX
+              value: {{ .Values.imsApi.env.SESSION_KEY_PREFIX | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.imsApi.probes.liveness.path | quote }}

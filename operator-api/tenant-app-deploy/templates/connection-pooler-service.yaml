@@ -1,0 +1,22 @@
+{{- if .Values.connectionPooler.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.connectionPooler.service.name | default "connection-pooler" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: connection-pooler
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: connection-pooler
+spec:
+  type: {{ .Values.connectionPooler.service.type | default "ClusterIP" }}
+  selector:
+    app.kubernetes.io/name: connection-pooler
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: connection-pooler
+  ports:
+    - name: tcp-pooler
+      protocol: TCP
+      port: {{ .Values.connectionPooler.service.port }}
+      targetPort: {{ .Values.connectionPooler.containerPort }}
+{{- end }}

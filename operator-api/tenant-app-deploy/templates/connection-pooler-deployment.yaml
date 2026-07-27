@@ -1,0 +1,91 @@
+{{- if .Values.connectionPooler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.connectionPooler.service.name | default "connection-pooler" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: connection-pooler
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: connection-pooler
+spec:
+  replicas: {{ .Values.connectionPooler.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: connection-pooler
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: connection-pooler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: connection-pooler
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: connection-pooler
+    spec:
+      containers:
+        - name: connection-pooler
+          image: "{{ .Values.connectionPooler.image.repository }}:{{ .Values.connectionPooler.image.tag }}"
+          imagePullPolicy: {{ .Values.connectionPooler.image.pullPolicy }}
+
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.connectionPooler.containerPort }}
+              protocol: TCP
+
+          env:
+            - name: DB_HOST
+              value: {{ .Values.connectionPooler.config.DB_HOST | quote }}
+
+            - name: DB_PORT
+              value: {{ .Values.connectionPooler.config.DB_PORT | quote }}
+
+            - name: DB_USER
+              value: {{ .Values.connectionPooler.config.DB_USER | quote }}
+
+            - name: DB_NAME
+              value: {{ .Values.connectionPooler.config.DB_NAME | quote }}
+
+            - name: POOL_MODE
+              value: {{ .Values.connectionPooler.config.POOL_MODE | quote }}
+
+            - name: MAX_CLIENT_CONN
+              value: {{ .Values.connectionPooler.config.MAX_CLIENT_CONN | quote }}
+
+            - name: DEFAULT_POOL_SIZE
+              value: {{ .Values.connectionPooler.config.DEFAULT_POOL_SIZE | quote }}
+
+            - name: MIN_POOL_SIZE
+              value: {{ .Values.connectionPooler.config.MIN_POOL_SIZE | quote }}
+
+            - name: RESERVE_POOL_SIZE
+              value: {{ .Values.connectionPooler.config.RESERVE_POOL_SIZE | quote }}
+
+            {{- if .Values.connectionPooler.secretRefs.existingSecretName }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.connectionPooler.secretRefs.existingSecretName | quote }}
+                  key: {{ .Values.connectionPooler.secretRefs.passwordKey | default "DB_PASSWORD" | quote }}
+            {{- else if .Values.secretRefs.existingSecretName }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.existingSecretName | quote }}
+                  key: {{ .Values.connectionPooler.secretRefs.passwordKey | default "DB_PASSWORD" | quote }}
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.connectionPooler.resources | nindent 12 }}
+
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.connectionPooler.containerPort }}
+            initialDelaySeconds: {{ .Values.connectionPooler.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.connectionPooler.probes.liveness.periodSeconds }}
+
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.connectionPooler.containerPort }}
+            initialDelaySeconds: {{ .Values.connectionPooler.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.connectionPooler.probes.readiness.periodSeconds }}
+{{- end }}

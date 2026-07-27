@@ -7,18 +7,22 @@ serviceAccount:
   name: ""
 
 ingress:
-  enabled: true
+  enabled: false
   className: nginx
+  host: ""
   path: /
   pathType: Prefix
   annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
 
 config:
   NODE_ENV: dev
-  DB_HOST: ""
+  DB_HOST: "173.249.8.56"
   DB_PORT: "5432"
-  DB_USER: ""
-  DB_NAME: ""
+  DB_USER: "test-user"
+  DB_NAME: "test-db"
   REDIS_HOST: ""
   REDIS_PORT: "6379"
   KAFKA_BROKERS: ""
@@ -30,11 +34,11 @@ imsApi:
   enabled: true
   replicaCount: 2
   image:
-    repository: joforrester/ims-api
+    repository: joforrester/tenant-api
     tag: latest
     pullPolicy: Always
   service:
-    port: 3000
+    port: 80
   containerPort: 3000
   resources:
     requests:
@@ -42,7 +46,7 @@ imsApi:
       memory: "512Mi"
     limits:
       cpu: "1"
-      memory: "1Gi"
+      memory: "750Mi"
   probes:
     liveness:
       path: /getHealth
@@ -55,11 +59,37 @@ imsApi:
   autoscaling:
     enabled: true
     minReplicas: 2
-    maxReplicas: 20
+    maxReplicas: 5
     targetCPUUtilizationPercentage: 60
+  env:
+    PORT: "3000"
+    AUTH_DISABLED: "true"
+
+    PGBOUNCER_HOST: "pgbouncer"
+    PGBOUNCER_PORT: "5432"
+
+    POSTGRES_DB: "ims-system"
+    POSTGRES_USER: "ims-user"
+    POSTGRES_PASSWORD: "eW@45215dkeq2mew8ej3m21b4394mEWdF"
+
+    REDIS_PORT: "6379"
+    SESSION_KEY_PREFIX: "session"
+
+  secretEnv:
+    existingSecret: "tenant-db-secret"
+    keys:
+      DB_NAME: "database"
+      DB_USER: "username"
+      DB_PASSWORD: "password"
+
+  downwardEnv:
+    TENANT_NAMESPACE:
+      fieldPath: metadata.namespace
+    POD_NAME:
+      fieldPath: metadata.name
 
 workerApi:
-  enabled: true
+  enabled: false
   replicaCount: 1
   image:
     repository: joforrester/worker-api
@@ -69,16 +99,104 @@ workerApi:
   resources:
     requests:
       cpu: "250m"
-      memory: "512Mi"
+      memory: "256Mi"
     limits:
       cpu: "1"
       memory: "1Gi"
   probes:
     liveness:
-      path: /getHealth
+      path: /health
       initialDelaySeconds: 120
       periodSeconds: 10
     readiness:
-      path: /getStatus
+      path: /test
       initialDelaySeconds: 10
       periodSeconds: 5
+
+connectionPooler:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    name: pgbouncer
+    type: ClusterIP
+    port: 5432
+
+  containerPort: 5432
+
+  config:
+    DB_HOST: "173.249.8.56"
+    DB_PORT: "5432"
+    DB_USER: "test-user"
+    DB_NAME: "test-db"
+
+    POOL_MODE: transaction
+    MAX_CLIENT_CONN: "100"
+    DEFAULT_POOL_SIZE: "15"
+    MIN_POOL_SIZE: "5"
+    RESERVE_POOL_SIZE: "5"
+
+  secretRefs:
+    existingSecretName: ""
+    passwordKey: "DB_PASSWORD"
+
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readiness:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 60
+
+redis:
+  enabled: true
+
+  replicaCount: 1
+
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+
+  port: 6379
+
+  service:
+    type: ClusterIP
+    port: 6379
+
+  appendOnly: "yes"
+
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 20
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi

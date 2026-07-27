@@ -1,0 +1,32 @@
+{{- if .Values.ingress.enabled }}
+{{- $host := required "ingress.host is required when ingress.enabled=true" .Values.ingress.host }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ims.imsApiName" . }}
+  labels:
+    {{- include "ims.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | default "nginx" | quote }}
+  {{- if and .Values.ingress.tls.enabled .Values.ingress.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path | default "/" | quote }}
+            pathType: {{ .Values.ingress.pathType | default "Prefix" | quote }}
+            backend:
+              service:
+                name: {{ include "ims.imsApiName" . }}
+                port:
+                  number: {{ .Values.imsApi.service.port }}
+{{- end }}

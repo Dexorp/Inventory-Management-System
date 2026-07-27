@@ -1,0 +1,251 @@
+---
+# Source: ims/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "tenant-acme-app"
+  labels:
+    helm.sh/chart: ims-0.1.0
+    app.kubernetes.io/name: ims
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: ims
+    ims.example.com/tenant: "acme"
+---
+# Source: ims/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-acme-ims-config
+  labels:
+    helm.sh/chart: ims-0.1.0
+    app.kubernetes.io/name: ims
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: ims
+    ims.example.com/tenant: "acme"
+data:
+  DB_HOST: "173.249.8.56"
+  DB_NAME: "ims_acme"
+  DB_PORT: "5432"
+  DB_USER: "test-user"
+  KAFKA_BROKERS: ""
+  NODE_ENV: "dev"
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+---
+# Source: ims/templates/ims-api-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant-acme-ims
+  labels:
+    helm.sh/chart: ims-0.1.0
+    app.kubernetes.io/name: ims
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: ims
+    ims.example.com/tenant: "acme"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ims
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/component: ims-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# Source: ims/templates/redis-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant-acme-redis
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/component: cache
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/component: cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+---
+# Source: ims/templates/ims-api-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenant-acme-ims
+  labels:
+    helm.sh/chart: ims-0.1.0
+    app.kubernetes.io/name: ims
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: ims
+    ims.example.com/tenant: "acme"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ims
+      app.kubernetes.io/instance: tenant-acme
+      app.kubernetes.io/component: ims-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ims
+        app.kubernetes.io/instance: tenant-acme
+        app.kubernetes.io/component: ims-api
+    spec:
+      serviceAccountName: "tenant-acme-app"
+      containers:
+        - name: ims-api
+          image: "joforrester/tenant-api:latest"
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: tenant-acme-ims-config
+            - secretRef:
+                name: test-db
+          resources:
+
+            limits:
+              cpu: "1"
+              memory: 750Mi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          env:
+            - name: PORT
+              value: "3000"
+
+            - name: AUTH_DISABLED
+              value: "true"
+
+            - name: PGBOUNCER_HOST
+              value: "pgbouncer"
+
+            - name: PGBOUNCER_PORT
+              value: "5432"
+
+            - name: POSTGRES_DB
+              value: "ims_acme"
+
+            - name: POSTGRES_USER
+              value: "ims-user"
+
+            - name: POSTGRES_PASSWORD
+              value: "eW@45215dkeq2mew8ej3m21b4394mEWdF"
+
+            - name: REDIS_HOST
+              value: "tenant-acme-redis"
+
+            - name: REDIS_PORT
+              value: "6379"
+
+            - name: SESSION_KEY_PREFIX
+              value: "session"
+          livenessProbe:
+            httpGet:
+              path: "/getHealth"
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: "/getStatus"
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# Source: ims/templates/redis-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenant-acme-redis
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: tenant-acme
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/instance: tenant-acme
+        app.kubernetes.io/component: cache
+    spec:
+      serviceAccountName: tenant-acme-app
+      containers:
+        - name: redis
+          image: "redis:7-alpine"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          args:
+            - "--appendonly"
+            - "yes"
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            limits:
+              cpu: 250m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+# Source: ims/templates/ims-api-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tenant-acme-ims-hpa
+  labels:
+    helm.sh/chart: ims-0.1.0
+    app.kubernetes.io/name: ims
+    app.kubernetes.io/instance: tenant-acme
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: ims
+    ims.example.com/tenant: "acme"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tenant-acme-ims
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+

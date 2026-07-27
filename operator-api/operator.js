@@ -4,6 +4,8 @@
  * - Ensures tenant namespace exists
  * - Verifies provisioning API created the DB secret in tenant namespace
  * - Installs/upgrades tenant runtime resources via Helm
+ * - Uses operator-api/tenant-app-deploy/values.yaml as the chart default values source
+ * - Applies only a small tenant-specific override file generated from the Tenant CR
  * - Handles finalizers/status updates and namespace deletion
  */
 
@@ -18,7 +20,12 @@ const CRD_GROUP = "ims.example.com";
 const CRD_VERSION = "v1";
 const CRD_PLURAL = "tenants";
 const FINALIZER = "ims.example.com/finalizer";
-const DEFAULT_HELM_CHART_PATH =  "/app/tenant-app-deploy"; //process.env.HELM_CHART_PATH ||
+
+// tenant-app-deploy is stored under ROOTDIR/operator-api locally and should be copied
+// into the operator container at /app/tenant-app-deploy.
+const DEFAULT_HELM_CHART_PATH =
+  process.env.HELM_CHART_PATH || "/app/tenant-app-deploy";
+
 const HELM_BIN = process.env.HELM_BIN || "/usr/local/bin/helm";
 
 const kc = new k8s.KubeConfig();
@@ -84,7 +91,9 @@ async function ensureNamespace(ns, labels) {
 
     return { created: false };
   } catch (e) {
-    if (!isNotFound(e)) throw e;
+    if (!isNotFound(e)) {
+      throw e;
+    }
   }
 
   await coreV1.createNamespace({ body: desired });
@@ -99,7 +108,10 @@ async function secretExists(ns, name) {
     });
     return true;
   } catch (e) {
-    if (isNotFound(e)) return false;
+    if (isNotFound(e)) {
+      return false;
+    }
+
     throw e;
   }
 }
@@ -162,24 +174,114 @@ function labelsForTenant(tenantName) {
   };
 }
 
+function assertHelmChart(chartPath) {
+  const chartYamlPath = path.join(chartPath, "Chart.yaml");
+  const valuesYamlPath = path.join(chartPath, "values.yaml");
+  const oldCaseValuesPath = path.join(chartPath, "values.YAML");
+
+  if (!fs.existsSync(chartYamlPath)) {
+    throw new Error(`Helm Chart.yaml not found at ${chartYamlPath}`);
+  }
+
+  if (!fs.existsSync(valuesYamlPath)) {
+    const extraHint = fs.existsSync(oldCaseValuesPath)
+      ? ` Found ${oldCaseValuesPath}, but Helm expects values.yaml on Linux/container filesystems.`
+      : "";
+
+    throw new Error(
+      `Helm values.yaml not found at ${valuesYamlPath}.${extraHint} ` +
+        "Rename values.YAML to values.yaml and rebuild/redeploy the operator image."
+    );
+  }
+
+  return {
+    chartYamlPath,
+    valuesYamlPath,
+  };
+}
+
+/**
+ * Build only tenant-specific Helm overrides.
+ *
+ * This intentionally does NOT copy the full spec.helm.values object.
+ * Old Tenant CRs may still contain stale fields like ingress.enabled or image tags.
+ * Copying those fields would keep overriding operator-api/tenant-app-deploy/values.yaml.
+ *
+ * The provisioner should send only minimal tenant-specific values, such as:
+ *
+ * spec:
+ *   helm:
+ *     values:
+ *       tenant:
+ *         name: acme
+ *         slug: acme
+ *       secretRefs:
+ *         existingSecretName: ims-db-secret
+ *       serviceAccount:
+ *         name: tenant-acme-app
+ *       config:
+ *         DB_NAME: ims_acme
+ */
 function buildHelmValues(tenant) {
   const name = tenant.metadata.name;
   const spec = tenant.spec || {};
   const slug = spec.slug || name;
+  const requestedValues = spec.helm?.values || {};
 
-  const helmValues = { ...(spec.helm?.values || {}) };
-
-  helmValues.tenant = {
-    ...(helmValues.tenant || {}),
-    name,
-    slug,
+  const helmValues = {
+    tenant: {
+      name,
+      slug,
+    },
   };
 
-  helmValues.secretRefs = {
-    ...(helmValues.secretRefs || {}),
-    existingSecretName:
-      helmValues.secretRefs?.existingSecretName || spec.secretRefs?.dbSecretName,
+  const existingSecretName =
+    spec.secretRefs?.dbSecretName ||
+    requestedValues.secretRefs?.existingSecretName;
+
+  if (existingSecretName) {
+    helmValues.secretRefs = {
+      existingSecretName,
+    };
+  }
+
+  const serviceAccountName =
+    requestedValues.serviceAccount?.name || `tenant-${slug}-app`;
+
+  helmValues.serviceAccount = {
+    name: serviceAccountName,
   };
+
+  /**
+   * Tenant DB name mapping.
+   *
+   * The chart templates may read different value paths:
+   * - config.DB_NAME
+   * - connectionPooler.config.DB_NAME
+   * - imsApi.env.POSTGRES_DB
+   *
+   * Helm does not automatically copy config.DB_NAME into those nested paths.
+   * This operator maps one provisioner value into all required chart paths.
+   */
+  const tenantDbName = requestedValues.config?.DB_NAME;
+
+  if (tenantDbName) {
+    helmValues.config = {
+      DB_NAME: tenantDbName,
+    };
+
+    helmValues.connectionPooler = {
+      config: {
+        DB_NAME: tenantDbName,
+      },
+    };
+
+    helmValues.imsApi = {
+      env: {
+        POSTGRES_DB: tenantDbName,
+      },
+    };
+  }
 
   return helmValues;
 }
@@ -187,10 +289,13 @@ function buildHelmValues(tenant) {
 function getHelmConfig(tenant) {
   const name = tenant.metadata.name;
   const spec = tenant.spec || {};
+  const chartPath = spec.helm?.chartPath || DEFAULT_HELM_CHART_PATH;
+  const { valuesYamlPath } = assertHelmChart(chartPath);
 
   return {
     releaseName: spec.helm?.releaseName || `tenant-${name}`,
-    chartPath: spec.helm?.chartPath || DEFAULT_HELM_CHART_PATH,
+    chartPath,
+    baseValuesPath: valuesYamlPath,
     values: buildHelmValues(tenant),
   };
 }
@@ -204,11 +309,11 @@ function runCommand(cmd, args, options = {}) {
   });
 
   return new Promise((resolve, reject) => {
-   const child = spawn(cmd, args, {
-  stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, ...(options.env || {}) },
-  ...options,
-});
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...(options.env || {}) },
+      ...options,
+    });
 
     let stdout = "";
     let stderr = "";
@@ -242,25 +347,39 @@ function runCommand(cmd, args, options = {}) {
 function yamlString(value, indent = 0) {
   const sp = " ".repeat(indent);
 
-  if (value === null) return "null\n";
-  if (typeof value === "string") return `${JSON.stringify(value)}\n`;
-  if (typeof value === "number" || typeof value === "boolean") return `${String(value)}\n`;
+  if (value === null) {
+    return "null\n";
+  }
+
+  if (typeof value === "string") {
+    return `${JSON.stringify(value)}\n`;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return `${String(value)}\n`;
+  }
 
   if (Array.isArray(value)) {
-    if (value.length === 0) return "[]\n";
+    if (value.length === 0) {
+      return "[]\n";
+    }
+
     return value
       .map((item) => {
         if (item !== null && typeof item === "object" && !Array.isArray(item)) {
           const inner = yamlString(item, indent + 2);
           return `${sp}- ${inner.replace(/^/gm, "  ").trimStart()}\n`;
         }
+
         return `${sp}- ${yamlString(item, 0).trimEnd()}\n`;
       })
       .join("");
   }
 
   const entries = Object.entries(value);
-  if (entries.length === 0) return "{}\n";
+  if (entries.length === 0) {
+    return "{}\n";
+  }
 
   return entries
     .map(([k, v]) => {
@@ -268,35 +387,54 @@ function yamlString(value, indent = 0) {
         const inner = yamlString(v, indent + 2);
         return `${sp}${k}:\n${inner}`;
       }
+
       return `${sp}${k}: ${yamlString(v, 0)}`;
     })
     .join("");
 }
 
-async function helmUpgradeInstall({ releaseName, namespace, chartPath, values }) {
+async function helmUpgradeInstall({
+  releaseName,
+  namespace,
+  chartPath,
+  baseValuesPath,
+  values,
+}) {
+  assertHelmChart(chartPath);
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenant-values-"));
   const valuesPath = path.join(tmpDir, `${releaseName}.values.yaml`);
-  
-  try {
-    console.log(await runCommand("ls"));
-    fs.writeFileSync(valuesPath, yamlString(values), "utf8");
-  
-    await runCommand(HELM_BIN, [
-  "upgrade",
-  "--install",
-  releaseName,
-  "/app/tenant-app-deploy",
-  "--namespace",
-  namespace,
-  "--create-namespace",
-  "-f",
-  valuesPath,
-], {
-  env: { ...process.env },
-});
-    
-    return await installPods(namespace);
 
+  try {
+    fs.writeFileSync(valuesPath, yamlString(values), "utf8");
+
+    console.log("Helm chart path:", chartPath);
+    console.log("Helm base values path:", baseValuesPath);
+    console.log("Helm tenant override values path:", valuesPath);
+    console.log(
+      "Helm tenant override values:\n" + fs.readFileSync(valuesPath, "utf8")
+    );
+
+    return await runCommand(
+      HELM_BIN,
+      [
+        "upgrade",
+        "--install",
+        releaseName,
+        chartPath,
+        "--namespace",
+        namespace,
+        "--create-namespace",
+        "--reset-values",
+        "-f",
+        baseValuesPath,
+        "-f",
+        valuesPath,
+      ],
+      {
+        env: { ...process.env },
+      }
+    );
   } finally {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -304,49 +442,23 @@ async function helmUpgradeInstall({ releaseName, namespace, chartPath, values })
   }
 }
 
-async function installPods(namespace) {
-  try {
-    if (!namespace) {
-      throw new Error("installPods requires a namespace");
-    }
-
-    const manifestsPath = "/app/tenant-app-deploy";
-
-    // Optional visibility while debugging
-    console.log(`Applying manifests from ${manifestsPath} into namespace ${namespace}`);
-
-    // Apply all YAML manifests in the directory to the tenant namespace.
-    // --namespace sets the target namespace for namespaced resources.
-    // -f <dir> applies all supported manifest files in that directory.
-    return await runCommand("kubectl", [
-      "apply",
-      "-f",
-      manifestsPath,
-      "--namespace",
-      namespace,
-    ], {
-      env: { ...process.env },
-    });
-  } catch (err) {
-    throw new Error(
-      `installPods failed for namespace "${namespace}": ${err?.message || err}`
-    );
-  }
-}
-
-
 async function helmUninstall(releaseName, namespace) {
   try {
-    
-    return await runCommand("helm", [
+    return await runCommand(HELM_BIN, [
       "uninstall",
       releaseName,
       "--namespace",
       namespace,
     ]);
   } catch (e) {
-    const combined = `${e?.stdout || ""}\n${e?.stderr || ""}\n${e?.message || ""}`;
-    if (combined.toLowerCase().includes("release: not found")) return;
+    const combined = `${e?.stdout || ""}\n${e?.stderr || ""}\n${
+      e?.message || ""
+    }`;
+
+    if (combined.toLowerCase().includes("release: not found")) {
+      return;
+    }
+
     throw e;
   }
 }
@@ -370,12 +482,18 @@ async function reconcileTenant(tenant) {
     throw new Error(`Tenant "${name}" is missing spec.secretRefs.dbSecretName`);
   }
 
-  const { releaseName, chartPath, values } = getHelmConfig(tenant);
+  const { releaseName, chartPath, baseValuesPath, values } =
+    getHelmConfig(tenant);
 
+  /**
+   * Do not skip tenants in Error state. This lets a fixed operator/chart retry existing CRs.
+   * We only skip if this exact generation is already Ready.
+   */
   if (
     !deletionTimestamp &&
     finalizers.includes(FINALIZER) &&
-    observedGeneration === currentGeneration
+    observedGeneration === currentGeneration &&
+    tenant.status?.phase === "Ready"
   ) {
     return;
   }
@@ -398,10 +516,15 @@ async function reconcileTenant(tenant) {
     try {
       await coreV1.deleteNamespace({ name: tenantNs });
     } catch (e) {
-      if (!isNotFound(e)) throw e;
+      if (!isNotFound(e)) {
+        throw e;
+      }
     }
 
-    const newFinalizers = (tenant.metadata.finalizers || []).filter((f) => f !== FINALIZER);
+    const newFinalizers = (tenant.metadata.finalizers || []).filter(
+      (f) => f !== FINALIZER
+    );
+
     await patchTenantMetadata(name, newFinalizers);
     tenant.metadata.finalizers = newFinalizers;
     return;
@@ -409,7 +532,7 @@ async function reconcileTenant(tenant) {
 
   await patchTenantStatusIfChanged(tenant, {
     phase: "Reconciling",
-    message: "Ensuring namespace, secret, and Helm release",
+    message: "Ensuring namespace, secret, and Helm release using chart values.yaml",
     observedGeneration: currentGeneration,
     lastReconcileTime: nowIso(),
   });
@@ -431,16 +554,92 @@ async function reconcileTenant(tenant) {
     releaseName,
     namespace: tenantNs,
     chartPath,
+    baseValuesPath,
     values,
   });
-  console.log("Helm Upgrade successful");
+
+  console.log("Helm upgrade/install successful");
 
   await patchTenantStatusIfChanged(tenant, {
     phase: "Ready",
-    message: "Tenant reconciled via Helm",
+    message: "Tenant reconciled via Helm using chart values.yaml",
     observedGeneration: currentGeneration,
     lastReconcileTime: nowIso(),
   });
+
+  console.log("Tenant status updated to Ready");
+}
+
+async function listExistingTenants() {
+  const result = await customApi.listNamespacedCustomObject({
+    group: CRD_GROUP,
+    version: CRD_VERSION,
+    namespace: WATCH_NAMESPACE,
+    plural: CRD_PLURAL,
+  });
+
+  const tenants = result?.body?.items || result?.items || [];
+
+  console.log(
+    `Found ${tenants.length} existing Tenant CR(s) in namespace "${WATCH_NAMESPACE}"`
+  );
+
+  return tenants;
+}
+
+async function reconcileExistingTenants() {
+  const tenants = await listExistingTenants();
+
+  for (const tenant of tenants) {
+    const name = tenant?.metadata?.name;
+    if (!name) {
+      continue;
+    }
+
+    if (inFlight.has(name)) {
+      continue;
+    }
+
+    inFlight.add(name);
+
+    try {
+      console.log(`Reconciling existing Tenant "${name}" on operator startup`);
+      await reconcileTenant(tenant);
+    } catch (err) {
+      if (isNotFound(err)) {
+        console.log(
+          `Tenant "${name}" no longer exists during startup reconcile; ignoring.`
+        );
+      } else {
+        console.error(
+          `Startup reconcile error for tenant "${name}":`,
+          err?.body || err
+        );
+
+        try {
+          await patchTenantStatusIfChanged(tenant, {
+            phase: "Error",
+            message: String(err?.message || err),
+            observedGeneration: tenant.metadata.generation,
+            lastReconcileTime: nowIso(),
+          });
+        } catch (statusErr) {
+          if (isNotFound(statusErr)) {
+            console.log(
+              `Tenant "${name}" disappeared before startup status update; ignoring.`
+            );
+          } else {
+            console.error(
+              `Failed to patch startup error status for tenant "${name}":`,
+              statusErr?.body || statusErr
+            );
+          }
+        }
+      }
+    } finally {
+      inFlight.delete(name);
+    }
+  }
 }
 
 async function startWatch() {
@@ -454,9 +653,23 @@ async function startWatch() {
     async (type, obj) => {
       const tenant = obj;
       const name = tenant?.metadata?.name;
-      if (!name) return;
+      if (!name) {
+        return;
+      }
 
-      if (!["ADDED", "MODIFIED", "DELETED"].includes(type)) {
+      /**
+       * Finalizer cleanup is handled during MODIFIED events where deletionTimestamp is set.
+       * By the time the final DELETED event arrives, the object no longer exists, so status
+       * patches can fail with "Tenant not found".
+       */
+      if (type === "DELETED") {
+        console.log(
+          `Tenant "${name}" was deleted; ignoring final DELETED watch event.`
+        );
+        return;
+      }
+
+      if (!["ADDED", "MODIFIED"].includes(type)) {
         return;
       }
 
@@ -465,19 +678,37 @@ async function startWatch() {
       }
 
       inFlight.add(name);
+
       try {
         await reconcileTenant(tenant);
       } catch (err) {
-        console.error(`Reconcile error for tenant "${name}":`, err?.body || err);
+        if (isNotFound(err)) {
+          console.log(
+            `Tenant "${name}" no longer exists; skipping reconcile/status update.`
+          );
+        } else {
+          console.error(`Reconcile error for tenant "${name}":`, err?.body || err);
 
-        try {
-          await patchTenantStatusIfChanged(tenant, {
-            phase: "Error",
-            message: String(err?.message || err),
-            observedGeneration: tenant.metadata.generation,
-            lastReconcileTime: nowIso(),
-          });
-        } catch {}
+          try {
+            await patchTenantStatusIfChanged(tenant, {
+              phase: "Error",
+              message: String(err?.message || err),
+              observedGeneration: tenant.metadata.generation,
+              lastReconcileTime: nowIso(),
+            });
+          } catch (statusErr) {
+            if (isNotFound(statusErr)) {
+              console.log(
+                `Tenant "${name}" disappeared before status update; ignoring.`
+              );
+            } else {
+              console.error(
+                `Failed to patch error status for tenant "${name}":`,
+                statusErr?.body || statusErr
+              );
+            }
+          }
+        }
       } finally {
         inFlight.delete(name);
       }
@@ -489,7 +720,15 @@ async function startWatch() {
   );
 }
 
-startWatch().catch((e) => {
+async function main() {
+  console.log("Starting IMS operator...");
+
+  await reconcileExistingTenants();
+
+  await startWatch();
+}
+
+main().catch((e) => {
   console.error("Fatal operator error:", e);
   process.exit(1);
 });

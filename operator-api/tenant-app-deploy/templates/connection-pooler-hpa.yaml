@@ -1,0 +1,27 @@
+{{- $connectionPooler := .Values.connectionPooler | default dict -}}
+{{- $autoscaling := $connectionPooler.autoscaling | default dict -}}
+{{- if and ($connectionPooler.enabled | default false) ($autoscaling.enabled | default false) }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $connectionPooler.name | default "connection-pooler" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: connection-pooler
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: connection-pooler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $connectionPooler.name | default "connection-pooler" }}
+  minReplicas: {{ $autoscaling.minReplicas | default 1 }}
+  maxReplicas: {{ $autoscaling.maxReplicas | default 3 }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage | default 60 }}
+{{- end }}

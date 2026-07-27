@@ -29,7 +29,7 @@ spec:
               value: ims-system
             # Name of the db secret to create in each tenant namespace
             - name: TENANT_DB_SECRET_NAME
-              value: ims-db-secret
+              value: test-db
             # Admin auth (use something better later; fine for now)
             - name: ADMIN_API_KEY
               valueFrom:
@@ -37,7 +37,27 @@ spec:
                   name: ims-provisioner-secret
                   key: ADMIN_API_KEY
             - name: TENANT_NS_PREFIX
-              
+            - name: DBHOST
+              valueFrom:
+                secretKeyRef:
+                  name: ims-provisioner-secret
+                  key: DBHOST
+            - name: DBPORT
+              valueFrom:
+                secretKeyRef:
+                  name: ims-provisioner-secret
+                  key: DBPORT
+            - name: DBUSER
+              valueFrom:
+                secretKeyRef:
+                  name: ims-provisioner-secret
+                  key: DBUSER
+            - name: DBPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ims-provisioner-secret
+                  key: DBPASSWORD
+
           readinessProbe:
             httpGet:
               path: /readyz

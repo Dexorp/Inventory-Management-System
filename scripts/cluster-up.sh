@@ -58,7 +58,7 @@ helm upgrade --install redis bitnami/redis \
   --set auth.enabled=false
 
 echo "Applying provisioning API manifests..."
-cd "$ROOT_DIR/deploy/helm/charts/provisioning-api"
+cd "$ROOT_DIR/deploy/helm/charts/ims-system"
 kubectl apply -f .
 echo "Cluster is up."
 echo "KUBECONFIG=$KUBECONFIG_PATH"

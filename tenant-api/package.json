@@ -1,0 +1,14 @@
+{
+  "name": "general-api",
+  "version": "1.0.0",
+  "description": "General tenant API for IMS",
+  "main": "general-api.js",
+  "scripts": {
+    "start": "node general-api.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.16.0",
+    "redis": "^5.5.6"
+  }
+}
